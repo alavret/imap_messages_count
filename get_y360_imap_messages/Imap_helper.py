@@ -65,7 +65,6 @@ NEEDED_PERMISSIONS = [
     "directory:read_users",
     "ya360_admin:mail_write_shared_mailbox_inventory",
     "ya360_admin:mail_read_shared_mailbox_inventory",
-    "ya360_security:audit_log_mail"
 ]
 
 SERVICE_APP_PERMISSIONS = [
