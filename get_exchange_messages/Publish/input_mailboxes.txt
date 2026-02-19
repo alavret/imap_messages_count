@@ -1,0 +1,2 @@
+user1@domain.ru
+user2@domain.ru
