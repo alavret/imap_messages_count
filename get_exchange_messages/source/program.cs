@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -14,6 +15,8 @@ internal sealed class Program
 {
     private static int Main(string[] args)
     {
+        PatchEwsBuildVersion();
+
         var baseDir = AppContext.BaseDirectory;
         using var logger = new Logger(Path.Combine(baseDir, "export_messages.log"));
         try
@@ -40,6 +43,51 @@ internal sealed class Program
         {
             logger.Error($"Fatal error: {ex.Message}", ex);
             return 1;
+        }
+    }
+
+    /// <summary>
+    /// Workaround for EWS Managed API 2.2.0: the static constructor of
+    /// <c>EwsUtilities</c> calls <c>FileVersionInfo.GetVersionInfo</c> with
+    /// <c>Assembly.GetExecutingAssembly().Location</c>, which returns an empty
+    /// string in single-file published apps (or certain modern .NET hosts),
+    /// causing a <see cref="TypeInitializationException"/>.
+    /// Pre-populate the lazy <c>BuildVersion</c> field via reflection so the
+    /// problematic code path is never executed.
+    /// </summary>
+    private static void PatchEwsBuildVersion()
+    {
+        try
+        {
+            var ewsAssembly = typeof(ExchangeService).Assembly;
+            var ewsUtilitiesType = ewsAssembly.GetType(
+                "Microsoft.Exchange.WebServices.Data.EwsUtilities");
+            if (ewsUtilitiesType == null) return;
+
+            var buildVersionField = ewsUtilitiesType.GetField(
+                "BuildVersion",
+                BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+            if (buildVersionField == null) return;
+
+            var lazyMember = buildVersionField.GetValue(null);
+            if (lazyMember == null) return;
+
+            var lazyType = lazyMember.GetType();
+            var memberField = lazyType.GetField(
+                "member", BindingFlags.Instance | BindingFlags.NonPublic);
+            var initializedField = lazyType.GetField(
+                "initialized", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            if (memberField != null && initializedField != null)
+            {
+                var version = ewsAssembly.GetName().Version?.ToString() ?? "2.2.0.0";
+                memberField.SetValue(lazyMember, version);
+                initializedField.SetValue(lazyMember, true);
+            }
+        }
+        catch
+        {
+            // If patching fails, the original error will surface later.
         }
     }
 }
