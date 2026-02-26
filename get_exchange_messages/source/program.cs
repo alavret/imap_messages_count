@@ -57,37 +57,90 @@ internal sealed class Program
     /// </summary>
     private static void PatchEwsBuildVersion()
     {
+        const BindingFlags staticFlags =
+            BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+        const BindingFlags instanceFlags =
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+
         try
         {
             var ewsAssembly = typeof(ExchangeService).Assembly;
             var ewsUtilitiesType = ewsAssembly.GetType(
                 "Microsoft.Exchange.WebServices.Data.EwsUtilities");
-            if (ewsUtilitiesType == null) return;
 
-            var buildVersionField = ewsUtilitiesType.GetField(
-                "BuildVersion",
-                BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-            if (buildVersionField == null) return;
-
-            var lazyMember = buildVersionField.GetValue(null);
-            if (lazyMember == null) return;
-
-            var lazyType = lazyMember.GetType();
-            var memberField = lazyType.GetField(
-                "member", BindingFlags.Instance | BindingFlags.NonPublic);
-            var initializedField = lazyType.GetField(
-                "initialized", BindingFlags.Instance | BindingFlags.NonPublic);
-
-            if (memberField != null && initializedField != null)
+            if (ewsUtilitiesType == null)
             {
-                var version = ewsAssembly.GetName().Version?.ToString() ?? "2.2.0.0";
-                memberField.SetValue(lazyMember, version);
-                initializedField.SetValue(lazyMember, true);
+                Console.Error.WriteLine("[EWS-PATCH] EwsUtilities type not found.");
+                return;
             }
+
+            // Find the LazyMember<string> field by scanning all static fields.
+            // The field is named "buildVersion" in the reference source, but we
+            // match by type to be safe across different builds.
+            FieldInfo? lazyField = null;
+            foreach (var f in ewsUtilitiesType.GetFields(staticFlags))
+            {
+                var ft = f.FieldType;
+                if (ft.IsGenericType &&
+                    ft.GetGenericArguments() is { Length: 1 } ga &&
+                    ga[0] == typeof(string) &&
+                    ft.Name.StartsWith("LazyMember", StringComparison.Ordinal))
+                {
+                    lazyField = f;
+                    break;
+                }
+            }
+
+            if (lazyField == null)
+            {
+                Console.Error.WriteLine(
+                    "[EWS-PATCH] LazyMember<string> field not found. Static fields: " +
+                    string.Join(", ", ewsUtilitiesType.GetFields(staticFlags)
+                        .Select(f => $"{f.Name}:{f.FieldType.Name}")));
+                return;
+            }
+
+            var lazyObj = lazyField.GetValue(null);
+            if (lazyObj == null)
+            {
+                Console.Error.WriteLine("[EWS-PATCH] LazyMember field value is null.");
+                return;
+            }
+
+            var lazyType = lazyObj.GetType();
+
+            // Scan instance fields of LazyMember<string> by type.
+            FieldInfo? strField = null;
+            FieldInfo? boolField = null;
+            foreach (var f in lazyType.GetFields(instanceFlags))
+            {
+                if (f.FieldType == typeof(string) && strField == null)
+                    strField = f;
+                else if (f.FieldType == typeof(bool) && boolField == null)
+                    boolField = f;
+            }
+
+            if (strField == null || boolField == null)
+            {
+                Console.Error.WriteLine(
+                    "[EWS-PATCH] Could not find member/initialized fields. Instance fields: " +
+                    string.Join(", ", lazyType.GetFields(instanceFlags)
+                        .Select(f => $"{f.Name}:{f.FieldType.Name}")));
+                return;
+            }
+
+            var version = ewsAssembly.GetName().Version?.ToString() ?? "2.2.0.0";
+            boolField.SetValue(lazyObj, true);
+            strField.SetValue(lazyObj, version);
+
+            // Write back in case LazyMember<T> is a value type (struct).
+            lazyField.SetValue(null, lazyObj);
+
+            Console.Error.WriteLine($"[EWS-PATCH] Patched BuildVersion = \"{version}\".");
         }
-        catch
+        catch (Exception ex)
         {
-            // If patching fails, the original error will surface later.
+            Console.Error.WriteLine($"[EWS-PATCH] Failed: {ex}");
         }
     }
 }
