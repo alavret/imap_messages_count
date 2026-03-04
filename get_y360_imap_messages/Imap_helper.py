@@ -4103,7 +4103,7 @@ def activate_service_applications(settings: "SettingParams") -> bool:
     Спецификация API: https://yandex.ru/dev/api360/doc/ru/ref/ServiceApplicationsService/ServiceApplicationsService_Activate
     
     Args:
-        settings: Объект настроек с oauth_token и organization_id
+        settings: Объект настроек с oauth_token и org_id
         
     Returns:
         bool: True если функция активирована, False в случае ошибки
@@ -4112,23 +4112,22 @@ def activate_service_applications(settings: "SettingParams") -> bool:
     headers = {"Authorization": f"OAuth {settings.oauth_token}"}
     retries = 0
     try:
-        with httpx.Client(headers=headers) as client:
-            while True:
-                logger.debug(f"POST URL - {url}")
-                response = client.post(url)
-                logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
-                if response.status_code != HTTPStatus.OK.value:
-                    logger.error(f"Ошибка при активации сервисных приложений: {response.status_code}. Сообщение: {response.text}")
-                    if retries < MAX_RETRIES:
-                        logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
-                        time.sleep(RETRIES_DELAY_SEC * retries)
-                        retries += 1
-                    else:
-                        logger.error("Превышено максимальное количество попыток.")
-                        return False
+        while True:
+            logger.debug(f"POST URL - {url}")
+            response = httpx.post(url, headers=headers)
+            logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
+            if response.status_code != HTTPStatus.OK.value:
+                logger.error(f"Ошибка при активации сервисных приложений: {response.status_code}. Сообщение: {response.text}")
+                if retries < MAX_RETRIES:
+                    logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
+                    time.sleep(RETRIES_DELAY_SEC * retries)
+                    retries += 1
                 else:
-                    logger.info("Сервисные приложения активированы.")
-                    return True
+                    logger.error("Превышено максимальное количество попыток.")
+                    return False
+            else:
+                logger.info("Сервисные приложения активированы.")
+                return True
     except httpx.HTTPError as e:
         logger.error(f"Ошибка при выполнении запроса к API: {e}")
         return False
@@ -4142,7 +4141,7 @@ def get_service_applications(settings: "SettingParams") -> Optional[list]:
     Спецификация API: https://yandex.ru/dev/api360/doc/ru/ref/ServiceApplicationsService/ServiceApplicationsService_Get
     
     Args:
-        settings: Объект настроек с oauth_token и organization_id
+        settings: Объект настроек с oauth_token и org_id
         
     Returns:
         list: Список сервисных приложений, None в случае ошибки
@@ -4151,31 +4150,33 @@ def get_service_applications(settings: "SettingParams") -> Optional[list]:
     headers = {"Authorization": f"OAuth {settings.oauth_token}"}
     retries = 0
     try:
-        with httpx.Client(headers=headers) as client:
-            while True:
-                logger.debug(f"GET URL - {url}")
-                response = client.get(url)
-                logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
-                if response.status_code != HTTPStatus.OK.value:
-                    if response.json()['message'] == 'feature is not active':
-                        logger.error('Функционал сервисных приложений не активирован в организации.')
-                        return None, response.json()['message']
-                    if response.json()['message'] == 'Not an owner':
-                        logger.error('Токен в параметре OAUTH_TOKEN_ARG выписан НЕ ВЛАДЕЛЬЦЕМ организации (с учеткой в @yandex.ru).')
-                        logger.error('Невозможно настроить сервисное приложение. Получите правильный токен и повторите попытку.')
-                        return None, response.json()['message']
-                    logger.error(f"Ошибка при получении списка сервисных приложений: {response.status_code}. Сообщение: {response.text}")
-                    if retries < MAX_RETRIES:
-                        logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
-                        time.sleep(RETRIES_DELAY_SEC * retries)
-                        retries += 1
-                    else:
-                        logger.error("Превышено максимальное количество попыток.")
-                        return None, response.json()['message']
+        while True:
+            logger.debug(f"GET URL - {url}")
+            response = httpx.get(url, headers=headers)
+            logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
+            if response.status_code != HTTPStatus.OK.value:
+                if response.json()['message'] == 'feature is not active':
+                    logger.error('Функционал сервисных приложений не активирован в организации.')
+                    return None, response.json()['message']
+                if response.json()['message'] == 'Not an owner':
+                    logger.error('Токен в параметре OAUTH_TOKEN_ARG выписан НЕ ВЛАДЕЛЬЦЕМ организации (с учеткой в @yandex.ru).')
+                    logger.error('Невозможно настроить сервисное приложение. Получите правильный токен и повторите попытку.')
+                    return None, response.json()['message']
+                logger.error(f"Ошибка при получении списка сервисных приложений: {response.status_code}. Сообщение: {response.text}")
+                if retries < MAX_RETRIES:
+                    logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
+                    time.sleep(RETRIES_DELAY_SEC * retries)
+                    retries += 1
                 else:
-                    applications = response.json().get("applications", [])
-                    logger.info(f"Получен список {len(applications)} сервисных приложений.")
-                    return applications, None
+                    logger.error("Превышено максимальное количество попыток.")
+                    return None, response.json()['message']
+            else:
+                applications = response.json().get("applications", [])
+                logger.info(f"Получен список {len(applications)} сервисных приложений.")
+                if not check_service_app_response(settings, response):
+                    logger.debug(f"Сервисное приложение {settings.application_client_id} не найдено в списке сервисных приложений организации или не имеет необходимых прав доступа.")
+                    return applications, f"Сервисное приложение {settings.application_client_id} не найдено в списке сервисных приложений организации или не имеет необходимых прав доступа."
+                return applications, None
     except httpx.HTTPError as e:
         logger.error(f"Ошибка при выполнении запроса к API: {e}")
         return None, f'{e.__class__.__name__}: {e}'  
@@ -4201,10 +4202,6 @@ def export_service_applications_api_data(settings: "SettingParams") -> bool:
         return False
     if not applications:
         logger.error("Список сервисных приложений пуст. Невозможно выгрузить данные.")
-        return False
-    if len(applications) == 0:
-        logger.error("Список сервисных приложений пуст. Невозможно выгрузить данные.")
-        return False
 
     data = {"applications": applications}
     target_dir = os.path.dirname(settings.service_app_api_data_file)
@@ -4222,7 +4219,6 @@ def export_service_applications_api_data(settings: "SettingParams") -> bool:
             f"(кол-во приложений: {len(applications)})"
         )
     return True
-
 
 def import_service_applications_api_data(settings: "SettingParams") -> bool:
     """
@@ -4279,40 +4275,40 @@ def import_service_applications_api_data(settings: "SettingParams") -> bool:
     retries = 0
     activated = False
     try:
-        with httpx.Client(headers=headers) as client:
-            while True:
-                logger.debug(f"POST URL - {url}")
-                response = client.post(url, json=payload)
-                logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
-                if response.status_code != HTTPStatus.OK.value:
-                    if response.json()['message'] == 'feature is not active':
-                        if not activated:
-                            logger.error('Функционал сервисных приложений не активирован в организации. Выполняем активацию...')
-                            result = activate_service_applications(settings)
-                            if not result:
-                                logger.error("Не удалось активировать функционал сервисных приложений. Проверьте настройки и повторите попытку.")
-                                return False
-                            activated = True
-                            time.sleep(RETRIES_DELAY_SEC)
-                        else:
-                            logger.error('Функционал сервисных приложений не активирован в организации. Проверьте настройки и повторите попытку.')
+        while True:
+            logger.debug(f"POST URL - {url}")
+            response = httpx.post(url, headers=headers, json=payload)
+            logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
+            if response.status_code != HTTPStatus.OK.value:
+                if response.json()['message'] == 'feature is not active':
+                    if not activated:
+                        logger.error('Функционал сервисных приложений не активирован в организации. Выполняем активацию...')
+                        result = activate_service_applications(settings)
+                        if not result:
+                            logger.error("Не удалось активировать функционал сервисных приложений. Проверьте настройки и повторите попытку.")
                             return False
-                    if response.json()['message'] == 'Not an owner':
-                        logger.error('Токен в параметре OAUTH_TOKEN_ARG выписан НЕ ВЛАДЕЛЬЦЕМ организации (с учеткой в @yandex.ru).')
-                        logger.error('Невозможно настроить сервисное приложение. Получите правильный токен и повторите попытку.')
-                        return False
-                    logger.error(f"Ошибка при загрузке сервисных приложений из файла: {response.status_code}. Сообщение: {response.text}")
-                    if retries < MAX_RETRIES:
-                        logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
-                        time.sleep(RETRIES_DELAY_SEC * retries)
-                        retries += 1
+                        activated = True
+                        time.sleep(1)
+                        continue
                     else:
-                        logger.error("Превышено максимальное количество попыток.")
+                        logger.error('Функционал сервисных приложений не активирован в организации. Проверьте настройки и повторите попытку.')
                         return False
+                if response.json()['message'] == 'Not an owner':
+                    logger.error('Токен в параметре OAUTH_TOKEN_ARG выписан НЕ ВЛАДЕЛЬЦЕМ организации (с учеткой в @yandex.ru).')
+                    logger.error('Невозможно настроить сервисное приложение. Получите правильный токен и повторите попытку.')
+                    return False
+                logger.error(f"Ошибка при загрузке сервисных приложений из файла: {response.status_code}. Сообщение: {response.text}")
+                if retries < MAX_RETRIES:
+                    logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
+                    time.sleep(RETRIES_DELAY_SEC * retries)
+                    retries += 1
                 else:
-                    app_count = len(payload.get("applications", []))
-                    logger.info(f"Данные сервисных приложений успешно загружены из файла (кол-во приложений: {app_count}).")
-                    return True
+                    logger.error("Превышено максимальное количество попыток.")
+                    return False
+            else:
+                app_count = len(payload.get("applications", []))
+                logger.info(f"Данные сервисных приложений успешно загружены из файла (кол-во приложений: {app_count}).")
+                return True
     except httpx.HTTPError as e:
         logger.error(f"Ошибка при выполнении запроса к API: {e}")
         return False
@@ -4322,16 +4318,6 @@ def import_service_applications_api_data(settings: "SettingParams") -> bool:
 
 
 def merge_service_app_permissions(existing_permissions: list, required_permissions: list) -> list:
-    """
-    Объединяет существующие разрешения сервисного приложения с требуемыми.
-    
-    Args:
-        existing_permissions: Текущий список разрешений
-        required_permissions: Список необходимых разрешений для добавления
-        
-    Returns:
-        list: Объединенный список разрешений без дубликатов
-    """
     merged_permissions = list(existing_permissions) if existing_permissions else []
     existing_set = set(merged_permissions)
     for permission in required_permissions:
@@ -4340,23 +4326,47 @@ def merge_service_app_permissions(existing_permissions: list, required_permissio
             existing_set.add(permission)
     return merged_permissions
 
+def check_service_app_response(settings: "SettingParams", response: httpx.Response) -> bool:
+    """
+    Проверяет ответ API сервисных приложений.
+    """
+    if len(response.json().get("applications", [])) == 0:
+        return False
+    
+    found_app = False
+    for app in response.json().get("applications", []):
+        if app.get("id") == settings.application_client_id:
+            found_app = True
+            scopes = app.get("scopes", [])
+            found_permissions = True
+            for perm in SERVICE_APP_PERMISSIONS:
+                if perm not in scopes:
+                    found_permissions = False
+                    break
+            if not found_permissions:
+                return False
+    if not found_app:
+        return False
+
+    return True
+
 def setup_service_application(settings: "SettingParams") -> bool:
     """
     Добавляет/обновляет сервисное приложение и его разрешения.
     Спецификация API: https://yandex.ru/dev/api360/doc/ru/ref/ServiceApplicationsService/ServiceApplicationsService_Create
     
     Args:
-        settings: Объект настроек с oauth_token, organization_id и application_client_id
+        settings: Объект настроек с oauth_token, org_id и application_client_id
         
     Returns:
         bool: True если операция успешна или не требуется, False в случае ошибки
     """
     if not settings.application_client_id:
-        logger.error("application_client_id не задан. Невозможно настроить сервисное приложение.")
+        logger.error("Параметр APPLICATION_CLIENT_ID не задан. Невозможно настроить сервисное приложение.")
         return False
 
     if not settings.application_client_secret:
-        logger.error("application_client_secret не задан. Невозможно проверить статус сервисного приложения.")
+        logger.error("Параметр APPLICATION_CLIENT_SECRET не задан. Невозможно проверить статус сервисного приложения.")
         return False
 
     CHECK_TOKEN_PERMISSIONS = ["ya360_security:service_applications_read",
@@ -4380,6 +4390,10 @@ def setup_service_application(settings: "SettingParams") -> bool:
                 return False
         else:
             return False
+
+    if len(applications) == 0:
+        logger.error("Список сервисных приложений пуст. Невозможно настроить сервисное приложение.")
+        return False
 
     client_id = settings.application_client_id
     required_permissions = SERVICE_APP_PERMISSIONS
@@ -4420,23 +4434,25 @@ def setup_service_application(settings: "SettingParams") -> bool:
     payload = {"applications": applications}
     retries = 0
     try:
-        with httpx.Client(headers=headers) as client:
-            while True:
-                logger.debug(f"POST URL - {url}")
-                response = client.post(url, json=payload)
-                logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
-                if response.status_code != HTTPStatus.OK.value:
-                    logger.error(f"Ошибка при обновлении сервисных приложений: {response.status_code}. Сообщение: {response.text}")
-                    if retries < MAX_RETRIES:
-                        logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
-                        time.sleep(RETRIES_DELAY_SEC * retries)
-                        retries += 1
-                    else:
-                        logger.error("Превышено максимальное количество попыток.")
-                        return False
+        while True:
+            logger.debug(f"POST URL - {url}")
+            response = httpx.post(url, headers=headers, json=payload)
+            logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
+            if response.status_code != HTTPStatus.OK.value:
+                logger.error(f"Ошибка при обновлении сервисных приложений: {response.status_code}. Сообщение: {response.text}")
+                if retries < MAX_RETRIES:
+                    logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
+                    time.sleep(RETRIES_DELAY_SEC * retries)
+                    retries += 1
                 else:
-                    logger.info(f"Список сервисных приложений успешно обновлен (Client ID - {client_id}).")
-                    break
+                    logger.error("Превышено максимальное количество попыток.")
+                    return False
+            else:
+                if not check_service_app_response(settings, response):
+                    logger.error("Не удалось настроить сервисное приложение. Проверьте настройки и повторите попытку.")
+                    return False
+                logger.info(f"Список сервисных приложений успешно обновлен (Client ID - {client_id}).")
+                break
     except httpx.HTTPError as e:
         logger.error(f"Ошибка при выполнении запроса к API: {e}")
         return False
@@ -4456,23 +4472,22 @@ def delete_service_applications_list(settings: "SettingParams") -> bool:
     headers = {"Authorization": f"OAuth {settings.oauth_token}"}
     retries = 0
     try:
-        with httpx.Client(headers=headers) as client:
-            while True:
-                logger.debug(f"DELETE URL - {url}")
-                response = client.delete(url)
-                logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
-                if response.status_code != HTTPStatus.OK.value:
-                    logger.error(f"Ошибка при очистке списка сервисных приложений: {response.status_code}. Сообщение: {response.text}")
-                    if retries < MAX_RETRIES:
-                        logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
-                        time.sleep(RETRIES_DELAY_SEC * retries)
-                        retries += 1
-                    else:
-                        logger.error("Превышено максимальное количество попыток.")
-                        return False
+        while True:
+            logger.debug(f"DELETE URL - {url}")
+            response = httpx.delete(url, headers=headers)
+            logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
+            if response.status_code != HTTPStatus.OK.value:
+                logger.error(f"Ошибка при очистке списка сервисных приложений: {response.status_code}. Сообщение: {response.text}")
+                if retries < MAX_RETRIES:
+                    logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
+                    time.sleep(RETRIES_DELAY_SEC * retries)
+                    retries += 1
                 else:
-                    logger.info("Список сервисных приложений успешно очищен.")
-                    return True
+                    logger.error("Превышено максимальное количество попыток.")
+                    return False
+            else:
+                logger.info("Список сервисных приложений успешно очищен.")
+                return True
     except httpx.HTTPError as e:
         logger.error(f"Ошибка при выполнении запроса к API: {e}")
         return False
@@ -4489,23 +4504,22 @@ def deactivate_service_applications(settings: "SettingParams") -> bool:
     headers = {"Authorization": f"OAuth {settings.oauth_token}"}
     retries = 0
     try:
-        with httpx.Client(headers=headers) as client:
-            while True:
-                logger.debug(f"POST URL - {url}")
-                response = client.post(url)
-                logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
-                if response.status_code != HTTPStatus.OK.value:
-                    logger.error(f"Ошибка при деактивации сервисных приложений: {response.status_code}. Сообщение: {response.text}")
-                    if retries < MAX_RETRIES:
-                        logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
-                        time.sleep(RETRIES_DELAY_SEC * retries)
-                        retries += 1
-                    else:
-                        logger.error("Превышено максимальное количество попыток.")
-                        return False
+        while True:
+            logger.debug(f"POST URL - {url}")
+            response = httpx.post(url, headers=headers)
+            logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
+            if response.status_code != HTTPStatus.OK.value:
+                logger.error(f"Ошибка при деактивации сервисных приложений: {response.status_code}. Сообщение: {response.text}")
+                if retries < MAX_RETRIES:
+                    logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
+                    time.sleep(RETRIES_DELAY_SEC * retries)
+                    retries += 1
                 else:
-                    logger.info("Сервисные приложения деактивированы.")
-                    return True
+                    logger.error("Превышено максимальное количество попыток.")
+                    return False
+            else:
+                logger.info("Сервисные приложения деактивированы.")
+                return True
     except httpx.HTTPError as e:
         logger.error(f"Ошибка при выполнении запроса к API: {e}")
         return False
@@ -4519,7 +4533,7 @@ def delete_service_application_from_list(settings: "SettingParams") -> bool:
     Если приложение единственное, очищает список и деактивирует функцию.
     """
     if not settings.application_client_id:
-        logger.error("application_client_id не задан. Невозможно удалить сервисное приложение.")
+        logger.error("Параметр APPLICATION_CLIENT_ID не задан. Невозможно удалить сервисное приложение.")
         return False
 
     CHECK_TOKEN_PERMISSIONS = ["ya360_security:service_applications_read",
@@ -4536,19 +4550,22 @@ def delete_service_application_from_list(settings: "SettingParams") -> bool:
 
     applications, error_message = get_service_applications(settings)
     if applications is None:
+        settings.service_app_status = False
         if error_message == 'feature is not active':
             return True
         else:
             return False
 
-    if not applications:
+    if len(applications) == 0:
         logger.info("Список сервисных приложений пуст. Нечего удалять.")
+        settings.service_app_status = False
         return True
 
     client_id = settings.application_client_id
     found = [app for app in applications if app.get("id") == client_id]
     if not found:
         logger.info(f"Сервисное приложение с ID {client_id} не найдено в списке сервисных приложений организации.")
+        settings.service_app_status = False
         return False
 
     new_applications = [app for app in applications if app.get("id") != client_id]
@@ -4556,6 +4573,7 @@ def delete_service_application_from_list(settings: "SettingParams") -> bool:
         logger.info("В списке осталось только удаляемое приложение. Очищаем список и деактивируем функцию.")
         if not delete_service_applications_list(settings):
             return False
+        settings.service_app_status = False
         return deactivate_service_applications(settings)
 
     url = f"{DEFAULT_360_API_URL}/security/v1/org/{settings.organization_id}/service_applications"
@@ -4563,23 +4581,23 @@ def delete_service_application_from_list(settings: "SettingParams") -> bool:
     payload = {"applications": new_applications}
     retries = 0
     try:
-        with httpx.Client(headers=headers) as client:
-            while True:
-                logger.debug(f"POST URL - {url}")
-                response = client.post(url, json=payload)
-                logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
-                if response.status_code != HTTPStatus.OK.value:
-                    logger.error(f"Ошибка при обновлении списка сервисных приложений: {response.status_code}. Сообщение: {response.text}")
-                    if retries < MAX_RETRIES:
-                        logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
-                        time.sleep(RETRIES_DELAY_SEC * retries)
-                        retries += 1
-                    else:
-                        logger.error("Превышено максимальное количество попыток.")
-                        return False
+        while True:
+            logger.debug(f"POST URL - {url}")
+            response = httpx.post(url, headers=headers, json=payload)
+            logger.debug(f'X-Request-Id: {response.headers.get("X-Request-Id","")}')
+            if response.status_code != HTTPStatus.OK.value:
+                logger.error(f"Ошибка при обновлении списка сервисных приложений: {response.status_code}. Сообщение: {response.text}")
+                if retries < MAX_RETRIES:
+                    logger.error(f"Повторная попытка ({retries+1}/{MAX_RETRIES})")
+                    time.sleep(RETRIES_DELAY_SEC * retries)
+                    retries += 1
                 else:
-                    logger.info(f"Сервисное приложение с ID {client_id} удалено из списка сервисных приложений организации.")
-                    return True
+                    logger.error("Превышено максимальное количество попыток.")
+                    return False
+            else:
+                logger.info(f"Сервисное приложение с ID {client_id} удалено из списка сервисных приложений организации.")
+                settings.service_app_status = False
+                return True
     except httpx.HTTPError as e:
         logger.error(f"Ошибка при выполнении запроса к API: {e}")
         return False
@@ -4588,24 +4606,12 @@ def delete_service_application_from_list(settings: "SettingParams") -> bool:
         return False
 
 def check_service_app_status(settings: "SettingParams", skip_permissions_check: bool = False) -> bool:
-    """
-    Проверяет статус и корректность настройки сервисного приложения.
-    
-    Выполняет проверку наличия приложения в списке организации,
-    получает тестовый токен пользователя и проверяет его права.
-    
-    Args:
-        settings: Объект настроек с application_client_id и application_client_secret
-        skip_permissions_check: Пропустить проверку прав OAuth-токена (по умолчанию False)
-        
-    Returns:
-        bool: True если приложение настроено корректно, False при ошибке
-    """
+
     if not settings.application_client_id:
-        logger.error("Параметр APPLICATION_CLIENT_ID_ARG не задан. Невозможно проверить статус сервисного приложения.")
+        logger.error("Параметр APPLICATION_CLIENT_ID не задан. Невозможно проверить статус сервисного приложения.")
         return False
     if not settings.application_client_secret:
-        logger.error("Параметр APPLICATION_CLIENT_SECRET_ARG не задан. Невозможно проверить статус сервисного приложения.")
+        logger.error("Параметр APPLICATION_CLIENT_SECRET не задан. Невозможно проверить статус сервисного приложения.")
         return False
 
     if not skip_permissions_check:
@@ -4628,6 +4634,16 @@ def check_service_app_status(settings: "SettingParams", skip_permissions_check: 
             else:
                 settings.service_app_status = False
                 return False
+        
+        if len(applications) == 0:
+            logger.info("Список сервисных приложений пуст. Невозможно проверить статус сервисного приложения.")
+            settings.service_app_status = False
+            return False
+
+        if error_message:
+            logger.error(error_message)
+            settings.service_app_status = False
+            return False
 
     # получаем первую страницу списка пользователей
     logger.info("Получение первой страницы списка всех пользователей организации из API...")
@@ -4641,8 +4657,7 @@ def check_service_app_status(settings: "SettingParams", skip_permissions_check: 
         retries = 1
         while True:
             logger.debug(f"GET URL - {url}")
-            with httpx.Client(headers=headers) as client:
-                response = client.get(url, params=params)
+            response = httpx.get(url, headers=headers, params=params)
             logger.debug(f"x-request-id: {response.headers.get('x-request-id','')}")
             if response.status_code != HTTPStatus.OK.value:
                 logger.error(f"!!! ОШИБКА !!! при GET запросе url - {url}: {response.status_code}. Сообщение об ошибке: {response.text}")
@@ -4681,7 +4696,6 @@ def check_service_app_status(settings: "SettingParams", skip_permissions_check: 
     user_email = user.get('email', '')
     try:
         user_token = get_service_app_token(settings, user_email)
-        #user_token = get_user_token(user_email, settings)
     except Exception as e:
         logger.error("Не удалось получить тестовый токен пользователя.")
         settings.service_app_status = False
@@ -4705,7 +4719,7 @@ def check_service_app_status(settings: "SettingParams", skip_permissions_check: 
             settings.service_app_status = False
             return False
 
-    logger.info("Сервисное приложение настроено корректно.")
+    logger.info("Сервисное приложение для удаления сообщений настроено корректно.")
     settings.service_app_status = True
     return True
 
@@ -5661,7 +5675,7 @@ def main_menu(settings: SettingParams):
         print("1. Выгрузить список сообщений почтового ящика для пользователей.")        
         print("2. Сравнить содержимое почтовых ящиков.")
         print("3. Восстановить конфигурацию почтовых ящиков из файла checkin.")
-        print("4. Проверить/настроить сервисное приложение для удаления сообщений.")
+        print("4. Проверить/настроить сервисное приложение.")
 
         print("0. Выйти")
 
